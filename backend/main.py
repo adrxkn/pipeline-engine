@@ -1,7 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+
 from backend.core.database import init_db
+from backend.routers import webhook, runs
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -23,6 +25,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(webhook.router)
+app.include_router(runs.router)
 
 @app.get("/health")
 async def health():
