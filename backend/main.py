@@ -7,6 +7,8 @@ from backend.core.database import init_db
 from backend.routers import webhook, runs
 from backend.services.parser import parse_pipeline, PipelineParseError
 from backend.services.dag import get_execution_plan
+from backend.services.executor import run_pipeline
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -49,4 +51,20 @@ async def test_parse(payload: dict):
         "pipeline": pipeline.name,
         "steps": [s.name for s in pipeline.steps],
         "execution_batches": batches
+    }
+
+@app.post("/test-execute")
+async def test_execute(payload: dict):
+    yaml_content = payload.get("yaml", "")
+    pipeline = parse_pipeline(yaml_content)
+    batches = get_execution_plan(pipeline.steps)
+    results = await run_pipeline(
+        pipeline.steps,
+        batches,
+        repo="test/repo",
+        commit_sha="abc1234"
+    )
+    return {
+        "pipeline": pipeline.name,
+        "results": [r.to_dict() for r in results]
     }
