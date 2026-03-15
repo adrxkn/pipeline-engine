@@ -8,7 +8,6 @@ from backend.services.parser import Step
 client = docker.from_env()
 
 class StepResult:
-    """Holds the result of a single executed step."""
     def __init__(self, name: str):
         self.name       = name
         self.status     = "pending"   
@@ -24,13 +23,14 @@ class StepResult:
 
     def to_dict(self):
         return {
-            "name":       self.name,
-            "status":     self.status,
-            "logs":       self.logs,
-            "started_at": self.started_at.isoformat() if self.started_at else None,
-            "ended_at":   self.ended_at.isoformat()   if self.ended_at   else None,
-            "duration":   self.duration,
-        }
+        "name":       self.name,
+        "status":     self.status,
+        "logs":       self.logs,
+        "started_at": self.started_at.isoformat() if self.started_at else None,
+        "ended_at":   self.ended_at.isoformat()   if self.ended_at   else None,
+        "duration":   self.duration,
+        "flaky":      self.status == "flaky"
+    }
 
 
 async def run_step(
@@ -64,7 +64,7 @@ async def run_step(
         )
 
         if log_callback:
-            await log_callback(step.name, f"▶ Starting step: {step.name}\n")
+            await log_callback(step.name, f"Starting step: {step.name}\n")
 
         elapsed = 0
         poll_interval = 0.5
@@ -73,10 +73,8 @@ async def run_step(
             await asyncio.sleep(poll_interval)
             elapsed += poll_interval
 
-            # get container state
             container_info = await asyncio.to_thread(container.reload)
 
-            # stream any new logs
             logs = await asyncio.to_thread(
                 container.logs,
                 stdout=True,
@@ -102,14 +100,14 @@ async def run_step(
             if log_callback:
                 await log_callback(
                     step.name,
-                    f"⏱ Step '{step.name}' timed out after {step.timeout}s\n"
+                    f"Step '{step.name}' timed out after {step.timeout}s\n"
                 )
 
     except Exception as e:
         result.status = "failed"
         result.logs.append(f"Executor error: {str(e)}")
         if log_callback:
-            await log_callback(step.name, f"❌ Error: {str(e)}\n")
+            await log_callback(step.name, f"Error: {str(e)}\n")
 
     finally:
         if container:
@@ -145,7 +143,7 @@ async def run_pipeline(
         if log_callback:
             await log_callback(
                 "system",
-                f"\n⚡ Batch {batch_index + 1}: running {batch} in parallel\n"
+                f"\n Batch {batch_index + 1}: running {batch} in parallel\n"
             )
 
         batch_results = await asyncio.gather(*[
@@ -158,6 +156,158 @@ async def run_pipeline(
         if any(r.status in ("failed", "timeout") for r in batch_results):
             failed = True
             if log_callback:
-                await log_callback("system", "❌ Batch failed — stopping pipeline\n")
+                await log_callback("system", "Batch failed — stopping pipeline\n")
+
+    return all_results
+
+async def run_pipeline_for_run(run_id: int, db_session_factory):
+
+    from backend.models.run import PipelineRun, RunStatus
+    from backend.services.github import fetch_workflow_file
+    from backend.services.parser import parse_pipeline, PipelineParseError
+    from backend.services.dag import get_execution_plan
+    from sqlalchemy import select
+
+    async with db_session_factory() as db:
+
+        result = await db.execute(
+            select(PipelineRun).where(PipelineRun.id == run_id)
+        )
+        run = result.scalar_one_or_none()
+        if not run:
+            print(f"Run #{run_id} not found")
+            return
+
+        run.status = RunStatus.running
+        await db.commit()
+
+        yaml_content = await fetch_workflow_file(run.repo, run.commit_sha)
+        if not yaml_content:
+            run.status = RunStatus.failed
+            run.steps = [{"name": "setup", "status": "failed",
+                         "logs": ["No .pipeline/workflow.yml found in repo"]}]
+            await db.commit()
+            return
+
+        try:
+            pipeline = parse_pipeline(yaml_content)
+            batches  = get_execution_plan(pipeline.steps)
+        except PipelineParseError as e:
+            run.status = RunStatus.failed
+            run.steps  = [{"name": "setup", "status": "failed", "logs": [str(e)]}]
+            await db.commit()
+            return
+
+        step_logs = {}
+
+        async def log_callback(step_name: str, line: str):
+            if step_name not in step_logs:
+                step_logs[step_name] = []
+            step_logs[step_name].append(line.rstrip())
+
+        results = await run_pipeline(
+            pipeline.steps,
+            batches,
+            run.repo,
+            run.commit_sha,
+            log_callback
+        )
+
+        run.steps = [r.to_dict() for r in results]
+        overall_success = all(
+            r.status == "success" for r in results
+            if r.status != "skipped"
+        )
+        run.status = RunStatus.success if overall_success else RunStatus.failed
+        await db.commit()
+
+        print(f"Run #{run_id} finished — {run.status}")
+
+async def run_step_with_retry(
+    step: Step,
+    repo: str,
+    commit_sha: str,
+    log_callback=None,
+    max_retries: int = 2,
+    base_delay: float = 2.0
+) -> StepResult:
+    attempt = 0
+    last_result = None
+
+    while attempt <= max_retries:
+        if attempt > 0:
+            delay = base_delay * (2 ** (attempt - 1)) 
+            if log_callback:
+                await log_callback(
+                    step.name,
+                    f"⏳ Retry {attempt}/{max_retries} — waiting {delay}s\n"
+                )
+            await asyncio.sleep(delay)
+
+        if log_callback and attempt > 0:
+            await log_callback(step.name, f"Retrying step: {step.name}\n")
+
+        result = await run_step(step, repo, commit_sha, log_callback)
+        last_result = result
+
+        if result.status == "success":
+            if attempt > 0:
+                result.status = "flaky"
+                if log_callback:
+                    await log_callback(
+                        step.name,
+                        f"Step '{step.name}' is flaky — passed on attempt {attempt + 1}\n"
+                    )
+            return result
+
+        attempt += 1
+
+    return last_result
+
+
+async def run_pipeline(
+    steps: list[Step],
+    batches: list[list[str]],
+    repo: str,
+    commit_sha: str,
+    log_callback=None
+) -> list[StepResult]:
+
+    step_map = {step.name: step for step in steps}
+    all_results = []
+    failed = False
+
+    for batch_index, batch in enumerate(batches):
+        if failed:
+            for name in batch:
+                r = StepResult(name)
+                r.status = "skipped"
+                all_results.append(r)
+            continue
+
+        if log_callback:
+            await log_callback(
+                "system",
+                f"\n⚡ Batch {batch_index + 1}: running {batch} in parallel\n"
+            )
+
+        batch_results = await asyncio.gather(*[
+            run_step_with_retry(
+                step_map[name],
+                repo,
+                commit_sha,
+                log_callback,
+                max_retries=2,
+                base_delay=2.0
+            )
+            for name in batch
+        ])
+
+        all_results.extend(batch_results)
+
+        if any(r.status in ("failed", "timeout") for r in batch_results):
+            failed = True
+            if log_callback:
+                await log_callback("system", "Batch failed — stopping pipeline\n")
 
     return all_results
