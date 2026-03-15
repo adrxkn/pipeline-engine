@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 
 from backend.core.database import init_db
-from backend.routers import webhook, runs
+from backend.routers import webhook, runs, ws
 from backend.services.parser import parse_pipeline, PipelineParseError
 from backend.services.dag import get_execution_plan
 from backend.services.executor import run_pipeline
@@ -37,6 +37,7 @@ async def parse_error_handler(request: Request, exc: PipelineParseError):
 
 app.include_router(webhook.router)
 app.include_router(runs.router)
+app.include_router(ws.router)
 
 @app.get("/health")
 async def health():
