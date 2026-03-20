@@ -26,7 +26,6 @@ async def broadcast(run_id: int, message: str):
 
 @router.websocket("/ws/runs/{run_id}/logs")
 async def run_logs(websocket: WebSocket, run_id: int):
-
     await websocket.accept()
 
     if run_id not in active_connections:
@@ -41,10 +40,10 @@ async def run_logs(websocket: WebSocket, run_id: int):
             run = result.scalar_one_or_none()
             if run and run.steps:
                 for step in run.steps:
+                    name = step.get("name", "unknown")
                     for line in step.get("logs", []):
-                        await websocket.send_text(
-                            f"[{step['name']}] {line}"
-                        )
+                        if line.strip():
+                            await websocket.send_text(f"[{name}] {line}")
 
         while True:
             await asyncio.sleep(1)

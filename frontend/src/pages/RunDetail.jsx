@@ -129,20 +129,51 @@ export default function RunDetail() {
 
   useEffect(() => {
     const init = async () => {
-      const data = await fetchRun()
-      setLoading(false)
-      connectWS()
+    const data = await fetchRun()
+    setLoading(false)
 
-      if (data && ['pending', 'running'].includes(data.status)) {
-        const interval = setInterval(async () => {
-          const updated = await fetchRun()
-          if (!['pending', 'running'].includes(updated?.status)) {
-            clearInterval(interval)
+    if (data && !['pending', 'running'].includes(data.status)) {
+      if (data.steps && data.steps.length > 0) {
+        const existingLogs = []
+        data.steps.forEach(step => {
+          existingLogs.push(`▶ Starting step: ${step.name}`)
+          if (step.logs && step.logs.length > 0) {
+            step.logs.forEach(line => {
+              if (line.trim()) existingLogs.push(`[${step.name}] ${line}`)
+            })
           }
-        }, 2000)
-        return () => clearInterval(interval)
+          existingLogs.push(`${step.status === 'success' ? '✅' : '❌'} ${step.name} finished in ${step.duration?.toFixed(2)}s`)
+        })
+        setLogs(existingLogs)
       }
+      connectWS()
+      return
     }
+
+    connectWS()
+
+    if (data && ['pending', 'running'].includes(data.status)) {
+      const interval = setInterval(async () => {
+        const updated = await fetchRun()
+        if (!['pending', 'running'].includes(updated?.status)) {
+          clearInterval(interval)
+          
+          if (updated?.steps) {
+            const finalLogs = []
+            updated.steps.forEach(step => {
+              if (step.logs) {
+                step.logs.forEach(line => {
+                  if (line.trim()) finalLogs.push(`[${step.name}] ${line}`)
+                })
+              }
+            })
+            setLogs(prev => prev.length > 0 ? prev : finalLogs)
+          }
+        }
+      }, 2000)
+      return () => clearInterval(interval)
+    }
+  }
     init()
     return () => { wsRef.current?.close(); wsRef.current = null }
   }, [id])

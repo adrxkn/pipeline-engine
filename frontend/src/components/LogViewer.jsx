@@ -1,13 +1,14 @@
 import { useEffect, useRef } from 'react'
 
 function getLineColor(line) {
-  if (line.startsWith('❌') || line.includes('Error') || line.includes('error')) return '#dc2626'
-  if (line.startsWith('✅'))                      return '#16a34a'
-  if (line.startsWith('⚠') || line.startsWith('⏳') || line.includes('flaky')) return '#d97706'
-  if (line.startsWith('⚡') || line.startsWith('🚀')) return '#2563eb'
-  if (line.startsWith('🔁'))                      return '#7c3aed'
-  if (line.startsWith('['))                       return '#09090b'
-  return '#71717a'
+  if (line.startsWith('❌') || line.includes('Error') || line.includes('error')) return '#f85149'
+  if (line.startsWith('✅'))                        return '#3fb950'
+  if (line.startsWith('⚠') || line.includes('flaky')) return '#d29922'
+  if (line.startsWith('⚡') || line.startsWith('🚀')) return '#58a6ff'
+  if (line.startsWith('🔁'))                        return '#a371f7'
+  if (line.startsWith('▶'))                         return '#6e7681'
+  if (line.startsWith('['))                         return '#e6edf3'
+  return '#e6edf3'  
 }
 
 export default function LogViewer({ logs, isLive }) {

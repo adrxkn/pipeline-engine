@@ -50,8 +50,7 @@ async def run_step(
 
     container = None
 
-    try:
-
+    try: 
         container = await asyncio.to_thread(
             client.containers.run,
             image="python:3.11-slim",  
@@ -62,12 +61,15 @@ async def run_step(
             nano_cpus=1_000_000_000,    
             network_mode="bridge",      
         )
+        await asyncio.sleep(0.2)
+        await asyncio.to_thread(container.reload)
 
         if log_callback:
             await log_callback(step.name, f"Starting step: {step.name}\n")
 
         elapsed = 0
         poll_interval = 0.5
+        seen_bytes = 0
 
         while elapsed < step.timeout:
             await asyncio.sleep(poll_interval)
@@ -79,18 +81,28 @@ async def run_step(
                 container.logs,
                 stdout=True,
                 stderr=True,
-                tail=50         
             )
-            log_text = logs.decode("utf-8", errors="replace")
-
-            if log_text:
-                for line in log_text.splitlines():
-                    if line not in result.logs: 
+            
+            new_bytes = logs[seen_bytes:]
+            if new_bytes:
+                new_text = new_bytes.decode("utf-8", errors="replace")
+                for line in new_text.splitlines():
+                    if line.strip():
                         result.logs.append(line)
                         if log_callback:
-                            await log_callback(step.name, line + "\n")
+                            await log_callback(step.name, line)
+                seen_bytes = len(logs)
 
             if container.status in ("exited", "dead"):
+                logs = await asyncio.to_thread(container.logs, stdout=True, stderr=True)
+                remaining = logs[seen_bytes:]
+                if remaining:
+                    for line in remaining.decode("utf-8", errors="replace").splitlines():
+                        if line.strip():
+                            result.logs.append(line)
+                            if log_callback:
+                                await log_callback(step.name, line)
+                
                 exit_code = container.attrs["State"]["ExitCode"]
                 result.status = "success" if exit_code == 0 else "failed"
                 break

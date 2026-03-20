@@ -45,7 +45,7 @@ export default function Navbar() {
       justifyContent: 'space-between',
     }}>
 
-      {/* Left — logo + nav */}
+      {/* top left side — logo + nav */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '32px' }}>
         <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <div style={{
@@ -54,7 +54,7 @@ export default function Navbar() {
             borderRadius: '6px',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>
-            <span style={{ color: '#fff', fontSize: '12px', fontWeight: '700', fontFamily: 'var(--font-mono)' }}>P</span>
+            <span style={{ color: '#42ed3dff', fontSize: '12px', fontWeight: '700', fontFamily: 'var(--font-mono)' }}>P</span>
           </div>
           <span style={{
             fontFamily:    'var(--font-mono)',
@@ -63,7 +63,7 @@ export default function Navbar() {
             letterSpacing: '-0.02em',
             color:         'var(--text)',
           }}>
-            pipeline<span style={{ color: 'var(--muted)' }}>.engine</span>
+            <span style={{ color: '#000000ff' }}>pipeline.engine</span>
           </span>
         </Link>
 
